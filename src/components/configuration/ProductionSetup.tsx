@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { configService } from '@/services/configService';
 import {
@@ -19,95 +18,20 @@ import {
   Info,
   Zap,
   Cloud,
-  Database,
-  AlertCircle,
-  Folder } from
-'lucide-react';
+  Folder
+} from 'lucide-react';
 
 const ProductionSetup: React.FC = () => {
   const [config, setConfig] = useState(configService.getConfig());
-  const [serviceAccountKey, setServiceAccountKey] = useState('');
   const [customBucket, setCustomBucket] = useState('');
   const [customDataset, setCustomDataset] = useState('');
-  const [isValidKey, setIsValidKey] = useState(false);
-  const [keyErrors, setKeyErrors] = useState<string[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
-    const currentKey = configService.getServiceAccountKey();
-    if (currentKey) {
-      setServiceAccountKey(currentKey);
-      validateServiceAccountKey(currentKey);
-    }
-
     const currentConfig = configService.getConfig();
     setCustomBucket(currentConfig.gcsDefaultBucket || '');
     setCustomDataset(currentConfig.bigQueryDefaultDataset || '');
   }, []);
-
-  const validateServiceAccountKey = (keyString: string): boolean => {
-    if (!keyString.trim()) {
-      setIsValidKey(false);
-      setKeyErrors(['Service account key is required']);
-      return false;
-    }
-
-    try {
-      const parsed = JSON.parse(keyString);
-      const errors: string[] = [];
-
-      // Check required fields
-      if (!parsed.type || parsed.type !== 'service_account') {
-        errors.push('Key must be of type "service_account"');
-      }
-      if (!parsed.project_id) {
-        errors.push('Missing project_id field');
-      }
-      if (!parsed.private_key) {
-        errors.push('Missing private_key field');
-      }
-      if (!parsed.client_email) {
-        errors.push('Missing client_email field');
-      }
-      if (!parsed.private_key_id) {
-        errors.push('Missing private_key_id field');
-      }
-
-      // Validate project ID format
-      if (parsed.project_id && !/^[a-z][a-z0-9-]*[a-z0-9]$/.test(parsed.project_id)) {
-        errors.push('Invalid project_id format');
-      }
-
-      // Validate client email format
-      if (parsed.client_email && !parsed.client_email.includes('@')) {
-        errors.push('Invalid client_email format');
-      }
-
-      setKeyErrors(errors);
-      setIsValidKey(errors.length === 0);
-
-      // Auto-configure bucket and dataset if not set
-      if (errors.length === 0) {
-        if (!customBucket) {
-          setCustomBucket(`${parsed.project_id}-shapefile-uploads`);
-        }
-        if (!customDataset) {
-          setCustomDataset('geo_processing');
-        }
-      }
-
-      return errors.length === 0;
-    } catch (error) {
-      setKeyErrors(['Invalid JSON format']);
-      setIsValidKey(false);
-      return false;
-    }
-  };
-
-  const handleServiceAccountKeyChange = (value: string) => {
-    setServiceAccountKey(value);
-    validateServiceAccountKey(value);
-  };
 
   const saveConfiguration = () => {
     const updates: any = {
@@ -116,25 +40,6 @@ const ProductionSetup: React.FC = () => {
       gcsDefaultBucket: customBucket.trim() || undefined,
       bigQueryDefaultDataset: customDataset.trim() || undefined
     };
-
-    if (config.authMethod === 'service-account') {
-      if (!isValidKey) {
-        toast({
-          title: "❌ Invalid Service Account Key",
-          description: "Please provide a valid service account key before saving.",
-          variant: "destructive"
-        });
-        return;
-      }
-      updates.serviceAccountKey = serviceAccountKey;
-
-      try {
-        const parsed = JSON.parse(serviceAccountKey);
-        updates.gcpProjectId = parsed.project_id;
-      } catch (error) {
-        console.error('Failed to parse service account key:', error);
-      }
-    }
 
     configService.updateConfig(updates);
 
@@ -147,11 +52,8 @@ const ProductionSetup: React.FC = () => {
 
   const clearConfiguration = () => {
     configService.clearConfig();
-    setServiceAccountKey('');
     setCustomBucket('');
     setCustomDataset('');
-    setIsValidKey(false);
-    setKeyErrors([]);
     setConfig(configService.getConfig());
 
     toast({
@@ -162,7 +64,7 @@ const ProductionSetup: React.FC = () => {
   };
 
   const envInfo = configService.getEnvironmentInfo();
-  const hasValidAuth = config.authMethod === 'service-account' ? isValidKey : !!(config.apiEndpoint && config.apiKey);
+  const hasValidAuth = config.authMethod === 'oauth' ? envInfo.oauthConfigured : !!(config.apiEndpoint && config.apiKey);
 
   return (
     <div className="space-y-6" data-id="xhl8icmcm" data-path="src/components/configuration/ProductionSetup.tsx">
@@ -453,7 +355,6 @@ const ProductionSetup: React.FC = () => {
       <div className="flex gap-4" data-id="d5vlekqk1" data-path="src/components/configuration/ProductionSetup.tsx">
         <Button
           onClick={saveConfiguration}
-          disabled={config.authMethod === 'service-account' && !isValidKey}
           className="flex-1" data-id="jrx2k5ydc" data-path="src/components/configuration/ProductionSetup.tsx">
 
           <Settings className="h-4 w-4 mr-2" data-id="k2qoq5hsg" data-path="src/components/configuration/ProductionSetup.tsx" />
@@ -478,18 +379,6 @@ const ProductionSetup: React.FC = () => {
                 <li data-id="d576sl5tx" data-path="src/components/configuration/ProductionSetup.tsx">Enter the correct bucket name in the "GCS Bucket" field above</li>
                 <li data-id="w1lnoxf90" data-path="src/components/configuration/ProductionSetup.tsx">Ensure the bucket exists in your GCP project</li>
                 <li data-id="eh2p1eft1" data-path="src/components/configuration/ProductionSetup.tsx">Save configuration and test again</li>
-              </ol>
-            </div>
-
-            <div data-id="9huvuwtv2" data-path="src/components/configuration/ProductionSetup.tsx">
-              <h4 className="font-medium mb-2" data-id="apt5fj2lv" data-path="src/components/configuration/ProductionSetup.tsx">For Demo/Testing:</h4>
-              <ol className="list-decimal list-inside space-y-1 text-gray-600" data-id="tkvbq2ptj" data-path="src/components/configuration/ProductionSetup.tsx">
-                <li data-id="ij84xckxm" data-path="src/components/configuration/ProductionSetup.tsx">Select "Service Account" authentication method</li>
-                <li data-id="l52r8rblg" data-path="src/components/configuration/ProductionSetup.tsx">Create a service account in your Google Cloud Console</li>
-                <li data-id="tacaijyme" data-path="src/components/configuration/ProductionSetup.tsx">Download the JSON key file and paste its contents above</li>
-                <li data-id="r9z5w0ta7" data-path="src/components/configuration/ProductionSetup.tsx">Configure the correct bucket name for your project</li>
-                <li data-id="ga24jaryy" data-path="src/components/configuration/ProductionSetup.tsx">Enable "Real Processing" to simulate production behavior</li>
-                <li data-id="qpklrpuxl" data-path="src/components/configuration/ProductionSetup.tsx">Test connections in the Diagnostics tab</li>
               </ol>
             </div>
             

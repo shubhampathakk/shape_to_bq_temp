@@ -329,32 +329,50 @@ class ProductionJobService {
   }
 
   private async processGCSJob(
-  jobId: string,
-  gcsBucket: string,
-  gcsPath: string,
-  schema: any,
-  datasetId: string,
-  tableId: string)
-  : Promise<void> {
+    jobId: string,
+    gcsBucket: string,
+    gcsPath: string,
+    schema: any,
+    datasetId: string,
+    tableId: string
+  ): Promise<void> {
     try {
       this.log('INFO', jobId, 'Starting GCS job processing...');
-
-      const fullGcsPath = `gs://${gcsBucket}/${gcsPath}`;
-
+      this.updateJobStatus(jobId, 'processing', 10);
+  
+      // Download the file from GCS
+      this.log('INFO', jobId, 'Downloading file from GCS...');
+      const file = await gcsService.downloadFile(gcsBucket, gcsPath);
       this.updateJobStatus(jobId, 'processing', 20);
-
-      if (schema && schema.length > 0) {
-        this.log('INFO', jobId, 'Creating BigQuery dataset and table with custom schema...');
+  
+      // Process the downloaded file
+      this.log('INFO', jobId, 'Processing downloaded file...');
+      const processingResult = await fileProcessingService.processFile(
+        file,
+        schema,
+        (progress: number) => {
+          const adjustedProgress = 20 + progress * 0.4; // Progress from 20% to 60%
+          this.updateJobStatus(jobId, 'processing', adjustedProgress);
+        }
+      );
+      this.log('INFO', jobId, `File processed. Records: ${processingResult.recordCount}`);
+      this.updateJobStatus(jobId, 'processing', 60);
+  
+      // Determine the schema to use
+      let schemaToUse = schema;
+      if (!schemaToUse || schemaToUse.length === 0) {
+        this.log('INFO', jobId, 'Auto-detecting schema from processed file.');
+        schemaToUse = processingResult.schema;
+      }
+  
+      // Create BigQuery table if a schema is defined
+      if (schemaToUse && schemaToUse.length > 0) {
+        this.log('INFO', jobId, 'Creating BigQuery table...');
         try {
           const config = configService.getConfig();
-          const bigQueryConfig = {
-            projectId: config.gcpProjectId,
-            datasetId,
-            tableId
-          };
-
-          await bigqueryService.createTable(bigQueryConfig, schema);
-          this.log('INFO', jobId, 'Table created successfully with custom schema');
+          const bigQueryConfig = { projectId: config.gcpProjectId, datasetId, tableId };
+          await bigqueryService.createTable(bigQueryConfig, schemaToUse);
+          this.log('INFO', jobId, 'Table created or already exists.');
         } catch (tableError) {
           if (tableError.message?.includes('409') || tableError.message?.includes('already exists')) {
             this.log('INFO', jobId, 'Table already exists, continuing...');
@@ -362,39 +380,35 @@ class ProductionJobService {
             throw new Error(`Table creation failed: ${tableError.message}`);
           }
         }
-      } else {
-        this.log('INFO', jobId, 'Skipping table creation - will use BigQuery auto-detect schema');
       }
-
-      this.updateJobStatus(jobId, 'loading', 50);
-
-      this.log('INFO', jobId, 'Loading data from GCS to BigQuery...');
+      this.updateJobStatus(jobId, 'loading', 70);
+  
+      // Load data from the processed file into BigQuery
+      this.log('INFO', jobId, 'Loading data into BigQuery...');
       const config = configService.getConfig();
-      const bigQueryConfig = {
-        projectId: config.gcpProjectId,
-        datasetId,
-        tableId
-      };
-
+      const bigQueryConfig = { projectId: config.gcpProjectId, datasetId, tableId };
       const loadJobId = await bigqueryService.loadDataFromGCS(
         bigQueryConfig,
-        fullGcsPath,
-        schema && schema.length > 0 ? schema : undefined
+        processingResult.processedFileUrl,
+        schemaToUse
       );
       this.log('INFO', jobId, `BigQuery load job started: ${loadJobId}`);
-
+  
+      // Monitor the BigQuery job
       this.updateJobStatus(jobId, 'loading', 80);
       await this.monitorBigQueryJob(jobId, loadJobId);
-
+  
+      // Update job details
       const job = this.jobs.get(jobId);
       if (job) {
         job.bigQueryJobId = loadJobId;
-        job.processedFileUrl = fullGcsPath;
+        job.recordCount = processingResult.recordCount;
+        job.processedFileUrl = processingResult.processedFileUrl;
       }
-
+  
       this.updateJobStatus(jobId, 'completed', 100);
-      this.log('INFO', jobId, 'GCS job completed successfully');
-
+      this.log('INFO', jobId, 'GCS job completed successfully.');
+  
     } catch (error) {
       this.log('ERROR', jobId, `GCS job failed: ${error.message}`);
       this.updateJobStatus(jobId, 'failed', 0, error.message);

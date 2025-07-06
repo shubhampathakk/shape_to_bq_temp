@@ -8,6 +8,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { jobService } from '@/services/jobService';
+import { gcsService } from '@/services/gcsService';
+import { fileProcessingService } from '@/services/fileProcessingService';
 import { configService } from '@/services/configService';
 import { authService } from '@/services/authService';
 import { ProcessingConfig, Job } from '@/types';
@@ -85,6 +87,28 @@ const MainDashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const handleProcessGCSFile = async (config: ProcessingConfig): Promise<ProcessingConfig> => {
+    if (!config.gcsBucket || !config.gcsPath) {
+      throw new Error("GCS bucket and path are required.");
+    }
+
+    toast({
+      title: "Processing GCS File",
+      description: "Downloading and processing file from GCS...",
+    });
+
+    const file = await gcsService.downloadFile(config.gcsBucket, config.gcsPath);
+
+    const { processedFileUrl, schema } = await fileProcessingService.processFile(file, config.customSchema);
+
+    return {
+      ...config,
+      sourceGcsPath: processedFileUrl,
+      customSchema: schema,
+      autoDetectSchema: false,
+    };
+  };
+
   const handleProcessFile = async () => {
     if (!user) {
       toast({
@@ -122,7 +146,12 @@ const MainDashboard: React.FC = () => {
     try {
       console.log('🚀 Starting job with configuration:', processingConfig);
 
-      const job = await jobService.createJob(processingConfig, user.id);
+      let finalConfig = processingConfig;
+      if (processingConfig.sourceType === 'gcs') {
+        finalConfig = await handleProcessGCSFile(processingConfig);
+      }
+
+      const job = await jobService.createJob(finalConfig, user.id);
       setJobs((prevJobs) => [job, ...prevJobs]); // Add the new job to the list
 
       toast({
@@ -498,7 +527,7 @@ const MainDashboard: React.FC = () => {
         </TabsContent>
 
         {/* OAuth Guide Tab */}
-        <TabsContent value="guide" data-id="6wtchw2hc" data-path="src/components/dashboard/MainDashboard.tsx">
+        <TabsContent value="guide" data-id="6wtchw2hc" data-path/components/dashboard/MainDashboard.tsx">
           <OAuthSetupGuide data-id="jyb4eu6ke" data-path="src/components/dashboard/MainDashboard.tsx" />
         </TabsContent>
       </Tabs>

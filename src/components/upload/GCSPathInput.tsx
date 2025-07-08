@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,7 +34,7 @@ const GCSPathInput: React.FC<GCSPathInputProps> = ({
         <Alert data-id="0901ivmrz" data-path="src/components/upload/GCSPathInput.tsx">
           <Info className="h-4 w-4" data-id="byz4ooi9s" data-path="src/components/upload/GCSPathInput.tsx" />
           <AlertDescription data-id="tu2733mfr" data-path="src/components/upload/GCSPathInput.tsx">
-            Specify the GCS bucket and path where your shapefile(s) are stored. 
+            Specify the GCS bucket and path where your zipped shapefile(s) are stored.
             Use wildcards (*) to process multiple files.
           </AlertDescription>
         </Alert>
@@ -56,7 +55,7 @@ const GCSPathInput: React.FC<GCSPathInputProps> = ({
             <Label htmlFor="gcs-path" data-id="3baav5rh1" data-path="src/components/upload/GCSPathInput.tsx">Path/Pattern</Label>
             <Input
               id="gcs-path"
-              placeholder="shapefiles/*.shp or path/to/specific/file.shp"
+              placeholder="shapefiles/*.zip or path/to/specific/file.zip"
               value={path}
               onChange={(e) => onPathChange(e.target.value)}
               disabled={disabled} data-id="ug78m81aj" data-path="src/components/upload/GCSPathInput.tsx" />
@@ -74,9 +73,9 @@ const GCSPathInput: React.FC<GCSPathInputProps> = ({
         <div className="space-y-2" data-id="zebcxo3m8" data-path="src/components/upload/GCSPathInput.tsx">
           <h4 className="text-sm font-medium text-gray-700" data-id="teio3xjwp" data-path="src/components/upload/GCSPathInput.tsx">Examples:</h4>
           <div className="space-y-1 text-xs text-gray-500" data-id="uyndb1sma" data-path="src/components/upload/GCSPathInput.tsx">
-            <p data-id="j6irnpuv7" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="49nro0y2c" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/data/*.shp</code> - Process all .shp files in the data folder</p>
-            <p data-id="gda35779i" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="7wq2943n6" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/cities.shp</code> - Process a specific shapefile</p>
-            <p data-id="3y1sp8pik" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="bh739uonq" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/regions/**/*.shp</code> - Process all .shp files recursively</p>
+            <p data-id="j6irnpuv7" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="49nro0y2c" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/data/*.zip</code> - Process all .zip files in the data folder</p>
+            <p data-id="gda35779i" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="7wq2943n6" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/cities.zip</code> - Process a specific zipped shapefile</p>
+            <p data-id="3y1sp8pik" data-path="src/components/upload/GCSPathInput.tsx"><code data-id="bh739uonq" data-path="src/components/upload/GCSPathInput.tsx">gs://my-bucket/regions/**/*.zip</code> - Process all .zip files recursively</p>
           </div>
         </div>
       </CardContent>

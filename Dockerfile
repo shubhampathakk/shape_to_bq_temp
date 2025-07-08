@@ -16,17 +16,27 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Stage 2: Serve the application from a lightweight web server
-FROM nginx:stable-alpine
+# Stage 2: Create the production image
+FROM node:20-alpine
 
-# Copy the built assets from the builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+# Set the working directory
+WORKDIR /app
 
-# Copy the Nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Install GDAL
+RUN apk add --no-cache gdal
 
-# Expose port 80 for the Nginx server
-EXPOSE 80
+# Copy built frontend from builder stage
+COPY --from=builder /app/dist ./dist
 
-# The default Nginx command will start the server
-CMD ["nginx", "-g", "daemon off;"]
+# Copy backend server files and package.json
+COPY server.cjs .
+COPY package.json .
+
+# Install production dependencies for the server
+RUN npm install --omit=dev
+
+# Expose the port your server will run on
+EXPOSE 3000
+
+# Start the server using the .cjs file
+CMD ["node", "server.cjs"]

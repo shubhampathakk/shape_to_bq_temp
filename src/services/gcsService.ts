@@ -399,6 +399,43 @@ export class GCSService {
       errorDetails: validation.error
     };
   }
+
+  async downloadFile(bucket: string, fileName: string): Promise<File> {
+    console.log('☁️ Downloading file from GCS:', { bucket, fileName });
+
+    if (!authService.isAuthenticated()) {
+      throw new Error('Not authenticated. Please sign in with Google OAuth.');
+    }
+
+    const url = `${this.baseUrl}/b/${bucket}/o/${encodeURIComponent(
+      fileName
+    )}?alt=media`;
+
+    try {
+      const response = await this.makeAuthenticatedRequest(url);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ GCS download failed:', response.status, errorText);
+        throw new Error(
+          `Failed to download file from GCS: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const blob = await response.blob();
+      const file = new File([blob], fileName, { type: blob.type });
+
+      console.log('✅ File downloaded successfully:', {
+        fileName: file.name,
+        fileSize: file.size,
+      });
+
+      return file;
+    } catch (error) {
+      console.error('❌ GCS file download failed:', error);
+      throw error;
+    }
+  }
 }
 
 export const gcsService = new GCSService();

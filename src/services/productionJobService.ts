@@ -62,7 +62,7 @@ class ProductionJobService {
     const jobId = `job_${Date.now()}`;
     const dateFolder = getTodaysDate();
 
-    console.log('噫 ProductionJobService: Creating job with config:', config);
+    console.log('🎬 ProductionJobService: Creating job with config:', config);
 
     if (!config.file && config.sourceType === 'local') {
       throw new Error('File is required for local file processing');
@@ -97,7 +97,7 @@ class ProductionJobService {
     const useCustomSchema = config.customSchema && config.customSchema.length > 0;
     const schema = useCustomSchema ? config.customSchema : undefined;
 
-    console.log('搭 Schema processing:', {
+    console.log('📝 Schema processing:', {
       hasCustomSchema: !!config.customSchema,
       customSchemaLength: config.customSchema?.length || 0,
       useCustomSchema,
@@ -143,33 +143,87 @@ class ProductionJobService {
   ): Promise<Job> {
     const jobId = `job_${Date.now()}`;
 
-    const job: ProcessingJob = {
+  const job: ProcessingJob = {
       id: jobId,
-      fileName: file.name,
-      fileSize: file.size,
-      gcsPath,
-      schema,
-      datasetId,
-      tableId,
+      fileName: config.file?.name || config.gcsPath?.split('/').pop() || 'unknown',
+      fileSize: config.file?.size || 0,
+      gcsPath: config.gcsPath || '',
+      schema: config.customSchema,
+      datasetId: config.targetTable.split('.')[0],
+      tableId: config.targetTable.split('.')[1],
       status: 'pending',
       progress: 0,
       createdAt: new Date(),
       lastUpdated: new Date(),
       logs: [],
-      gcpProjectId,
-      sourceType,
+      gcpProjectId: config.gcpProjectId,
+      sourceType: config.sourceType,
     };
 
     this.jobs.set(jobId, job);
-    this.log('INFO', jobId, `Job created for file: ${file.name} (${file.size} bytes)`);
+    this.log('INFO', jobId, `Job created for: ${job.fileName}`);
     this.notifyJobUpdate();
 
-    this.processFileJob(jobId, file, gcsBucket, gcsPath, schema, datasetId, tableId).catch((error) => {
+    this.processJob(job, config).catch((error) => {
       this.log('ERROR', jobId, `Job processing failed: ${error.message}`);
       this.updateJobStatus(jobId, 'failed', 0, error.message);
     });
 
     return this.convertToJob(job);
+  }
+
+  private async processJob(job: ProcessingJob, config: ProcessingConfig): Promise<void> {
+    const jobId = job.id;
+    this.log('INFO', jobId, 'Starting job processing...');
+    this.updateJobStatus(jobId, 'processing', 10);
+    
+    let fileToConvert: File;
+
+    if (config.sourceType === 'local' && config.file) {
+      this.log('INFO', jobId, 'Using locally uploaded file.');
+      fileToConvert = config.file;
+      this.updateJobStatus(jobId, 'processing', 20);
+    } else if (config.sourceType === 'gcs') {
+      this.log('INFO', jobId, `Downloading file from gs://${config.gcsBucket}/${config.gcsPath}...`);
+      fileToConvert = await gcsService.downloadFile(config.gcsBucket!, config.gcsPath!);
+      this.log('INFO', jobId, 'File downloaded from GCS.');
+      this.updateJobStatus(jobId, 'processing', 20);
+    } else {
+      throw new Error("Invalid source type or missing file for processing.");
+    }
+
+    this.log('INFO', jobId, 'Sending file to backend for conversion...');
+    const convertedFile = await fileProcessingService.processFile(fileToConvert);
+    this.log('INFO', jobId, 'File converted successfully by backend.');
+    this.updateJobStatus(jobId, 'processing', 50);
+
+    this.log('INFO', jobId, 'Uploading converted file to GCS...');
+    const dateFolder = getTodaysDate();
+    const timestamp = Date.now();
+    const baseName = job.fileName.replace(/\.zip$/i, '');
+    const gcsPath = `${dateFolder}/converted/${timestamp}_${baseName}_processed.geojson`;
+    const gcsBucket = config.gcsBucket || configService.getDefaultBucket();
+
+    const uploadResult = await gcsService.uploadFile(convertedFile, gcsBucket, gcsPath);
+    this.log('INFO', jobId, `Converted file uploaded to: ${uploadResult.gcsUri}`);
+    this.updateJobStatus(jobId, 'loading', 70);
+
+    this.log('INFO', jobId, 'Loading data to BigQuery...');
+    const loadJobId = await bigqueryService.loadDataFromGCS(
+        { projectId: job.gcpProjectId, datasetId: job.datasetId, tableId: job.tableId },
+        uploadResult.gcsUri,
+        // Since schema is not returned from backend, we rely on autodetect
+        undefined
+    );
+
+    this.log('INFO', jobId, `BigQuery load job started: ${loadJobId}`);
+    this.updateJobStatus(jobId, 'loading', 90);
+    
+    await this.monitorBigQueryJob(jobId, loadJobId);
+
+    job.bigQueryJobId = loadJobId;
+    this.updateJobStatus(jobId, 'completed', 100);
+    this.log('INFO', jobId, 'Job completed successfully.');
   }
 
   async createJobFromGCS(
@@ -295,7 +349,7 @@ class ProductionJobService {
         tableId
       };
 
-      console.log('識 Loading data with schema configuration:', {
+      console.log('📤 Loading data with schema configuration:', {
         hasSchema: schemaToUse && schemaToUse.length > 0,
         schemaFields: schemaToUse?.length || 0,
         willAutoDetect: !schemaToUse || schemaToUse.length === 0
@@ -339,12 +393,12 @@ class ProductionJobService {
     try {
       this.log('INFO', jobId, 'Starting GCS job processing...');
       this.updateJobStatus(jobId, 'processing', 10);
-  
+
       // Download the file from GCS
       this.log('INFO', jobId, 'Downloading file from GCS...');
       const file = await gcsService.downloadFile(gcsBucket, gcsPath);
       this.updateJobStatus(jobId, 'processing', 20);
-  
+
       // Process the downloaded file
       this.log('INFO', jobId, 'Processing downloaded file...');
       const processingResult = await fileProcessingService.processFile(
@@ -357,14 +411,14 @@ class ProductionJobService {
       );
       this.log('INFO', jobId, `File processed. Records: ${processingResult.recordCount}`);
       this.updateJobStatus(jobId, 'processing', 60);
-  
+
       // Determine the schema to use
       let schemaToUse = schema;
       if (!schemaToUse || schemaToUse.length === 0) {
         this.log('INFO', jobId, 'Auto-detecting schema from processed file.');
         schemaToUse = processingResult.schema;
       }
-  
+
       // Create BigQuery table if a schema is defined
       if (schemaToUse && schemaToUse.length > 0) {
         this.log('INFO', jobId, 'Creating BigQuery table...');
@@ -382,7 +436,7 @@ class ProductionJobService {
         }
       }
       this.updateJobStatus(jobId, 'loading', 70);
-  
+
       // Load data from the processed file into BigQuery
       this.log('INFO', jobId, 'Loading data into BigQuery...');
       const config = configService.getConfig();
@@ -393,11 +447,11 @@ class ProductionJobService {
         schemaToUse
       );
       this.log('INFO', jobId, `BigQuery load job started: ${loadJobId}`);
-  
+
       // Monitor the BigQuery job
       this.updateJobStatus(jobId, 'loading', 80);
       await this.monitorBigQueryJob(jobId, loadJobId);
-  
+
       // Update job details
       const job = this.jobs.get(jobId);
       if (job) {
@@ -405,10 +459,10 @@ class ProductionJobService {
         job.recordCount = processingResult.recordCount;
         job.processedFileUrl = processingResult.processedFileUrl;
       }
-  
+
       this.updateJobStatus(jobId, 'completed', 100);
       this.log('INFO', jobId, 'GCS job completed successfully.');
-  
+
     } catch (error) {
       this.log('ERROR', jobId, `GCS job failed: ${error.message}`);
       this.updateJobStatus(jobId, 'failed', 0, error.message);

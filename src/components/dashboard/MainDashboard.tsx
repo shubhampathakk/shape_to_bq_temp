@@ -527,8 +527,8 @@ const MainDashboard: React.FC = () => {
         </TabsContent>
 
         {/* OAuth Guide Tab */}
-        <TabsContent value="guide" data-id="6wtchw2hc" data-path/components/dashboard/MainDashboard.tsx">
-          <OAuthSetupGuide data-id="jyb4eu6ke" data-path="src/components/dashboard/MainDashboard.tsx" />
+        <TabsContent value="guide" data-id="6wtchw2hc" data-path="src/components/dashboard/MainDashboard.tsx">
+          <OAuthSetupGuide data-id="jyb4eu6ke" data-path="src/components/setup/OAuthSetupGuide.tsx" />
         </TabsContent>
       </Tabs>
     </div>);

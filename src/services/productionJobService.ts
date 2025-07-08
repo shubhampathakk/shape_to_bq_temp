@@ -143,28 +143,40 @@ class ProductionJobService {
   ): Promise<Job> {
     const jobId = `job_${Date.now()}`;
 
-  const job: ProcessingJob = {
+    // Create a temporary config object for processJob from the function's parameters
+    const jobConfigForProcessing: ProcessingConfig = {
+      sourceType: sourceType,
+      file: file,
+      gcsBucket: gcsBucket,
+      gcsPath: gcsPath,
+      gcpProjectId: gcpProjectId,
+      targetTable: `${datasetId}.${tableId}`,
+      autoDetectSchema: !schema,
+      customSchema: schema,
+    };
+
+    const job: ProcessingJob = {
       id: jobId,
-      fileName: config.file?.name || config.gcsPath?.split('/').pop() || 'unknown',
-      fileSize: config.file?.size || 0,
-      gcsPath: config.gcsPath || '',
-      schema: config.customSchema,
-      datasetId: config.targetTable.split('.')[0],
-      tableId: config.targetTable.split('.')[1],
+      fileName: file.name,
+      fileSize: file.size,
+      gcsPath: gcsPath,
+      schema: schema,
+      datasetId: datasetId,
+      tableId: tableId,
       status: 'pending',
       progress: 0,
       createdAt: new Date(),
       lastUpdated: new Date(),
       logs: [],
-      gcpProjectId: config.gcpProjectId,
-      sourceType: config.sourceType,
+      gcpProjectId: gcpProjectId,
+      sourceType: sourceType,
     };
 
     this.jobs.set(jobId, job);
     this.log('INFO', jobId, `Job created for: ${job.fileName}`);
     this.notifyJobUpdate();
 
-    this.processJob(job, config).catch((error) => {
+    this.processJob(job, jobConfigForProcessing).catch((error) => {
       this.log('ERROR', jobId, `Job processing failed: ${error.message}`);
       this.updateJobStatus(jobId, 'failed', 0, error.message);
     });
@@ -172,27 +184,28 @@ class ProductionJobService {
     return this.convertToJob(job);
   }
 
-  private async processJob(job: ProcessingJob, config: ProcessingConfig): Promise<void> {
+   private async processJob(job: ProcessingJob, config: ProcessingConfig): Promise<void> {
     const jobId = job.id;
     this.log('INFO', jobId, 'Starting job processing...');
     this.updateJobStatus(jobId, 'processing', 10);
-    
+
     let fileToConvert: File;
 
     if (config.sourceType === 'local' && config.file) {
-      this.log('INFO', jobId, 'Using locally uploaded file.');
-      fileToConvert = config.file;
-      this.updateJobStatus(jobId, 'processing', 20);
+        this.log('INFO', jobId, 'Using locally uploaded file.');
+        fileToConvert = config.file;
+        this.updateJobStatus(jobId, 'processing', 20);
     } else if (config.sourceType === 'gcs') {
-      this.log('INFO', jobId, `Downloading file from gs://${config.gcsBucket}/${config.gcsPath}...`);
-      fileToConvert = await gcsService.downloadFile(config.gcsBucket!, config.gcsPath!);
-      this.log('INFO', jobId, 'File downloaded from GCS.');
-      this.updateJobStatus(jobId, 'processing', 20);
+        this.log('INFO', jobId, `Downloading file from gs://${config.gcsBucket}/${config.gcsPath}...`);
+        fileToConvert = await gcsService.downloadFile(config.gcsBucket!, config.gcsPath!);
+        this.log('INFO', jobId, 'File downloaded from GCS.');
+        this.updateJobStatus(jobId, 'processing', 20);
     } else {
-      throw new Error("Invalid source type or missing file for processing.");
+        throw new Error("Invalid source type or missing file for processing.");
     }
 
     this.log('INFO', jobId, 'Sending file to backend for conversion...');
+    // This now correctly receives the converted GeoJSON file object
     const convertedFile = await fileProcessingService.processFile(fileToConvert);
     this.log('INFO', jobId, 'File converted successfully by backend.');
     this.updateJobStatus(jobId, 'processing', 50);
@@ -204,6 +217,7 @@ class ProductionJobService {
     const gcsPath = `${dateFolder}/converted/${timestamp}_${baseName}_processed.geojson`;
     const gcsBucket = config.gcsBucket || configService.getDefaultBucket();
 
+    // Pass the converted File object to be uploaded to GCS
     const uploadResult = await gcsService.uploadFile(convertedFile, gcsBucket, gcsPath);
     this.log('INFO', jobId, `Converted file uploaded to: ${uploadResult.gcsUri}`);
     this.updateJobStatus(jobId, 'loading', 70);
@@ -211,20 +225,19 @@ class ProductionJobService {
     this.log('INFO', jobId, 'Loading data to BigQuery...');
     const loadJobId = await bigqueryService.loadDataFromGCS(
         { projectId: job.gcpProjectId, datasetId: job.datasetId, tableId: job.tableId },
-        uploadResult.gcsUri,
-        // Since schema is not returned from backend, we rely on autodetect
+        uploadResult.gcsUri, // Use the real GCS URI from the upload result
         undefined
     );
 
     this.log('INFO', jobId, `BigQuery load job started: ${loadJobId}`);
     this.updateJobStatus(jobId, 'loading', 90);
-    
+
     await this.monitorBigQueryJob(jobId, loadJobId);
 
     job.bigQueryJobId = loadJobId;
     this.updateJobStatus(jobId, 'completed', 100);
     this.log('INFO', jobId, 'Job completed successfully.');
-  }
+}
 
   async createJobFromGCS(
     gcsBucket: string,

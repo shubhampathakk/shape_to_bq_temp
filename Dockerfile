@@ -1,42 +1,30 @@
-# Stage 1: Build the application
-FROM node:20-alpine AS builder
-
-# Set the working directory
+# Stage 1: Build the React application
+FROM node:20-bookworm AS builder
 WORKDIR /app
-
-# Copy package.json and package-lock.json
 COPY package.json package-lock.json ./
-
-# Install dependencies
 RUN npm install
-
-# Copy the rest of the application source code
 COPY . .
-
-# Build the application
 RUN npm run build
 
-# Stage 2: Create the production image
-FROM node:20-alpine
-
-# Set the working directory
+# Stage 2: Create the final production image
+FROM node:20-bookworm-slim
 WORKDIR /app
 
-# Install GDAL
-RUN apk add --no-cache gdal
+# Install GDAL and the unzip utility
+RUN apt-get update && \
+    apt-get install -y gdal-bin unzip --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy built frontend from builder stage
-COPY --from=builder /app/dist ./dist
-
-# Copy backend server files and package.json
+# Copy the server files and install server dependencies (including @google-cloud/storage)
 COPY server.cjs .
 COPY package.json .
-
-# Install production dependencies for the server
 RUN npm install --omit=dev
 
-# Expose the port your server will run on
-EXPOSE 3000
+# Copy the built React app
+COPY --from=builder /app/dist ./dist
 
-# Start the server using the .cjs file
+# Create the uploads directory
+RUN mkdir -p /app/uploads
+
+EXPOSE 3000
 CMD ["node", "server.cjs"]

@@ -3,18 +3,13 @@ import { SchemaField } from '@/types';
 export class FileProcessingService {
   /**
    * This service now acts as a client to the backend API.
-   * The complex processing logic has been moved to server.cjs.
+   * It receives a converted file blob from the server.
    */
-
-  async processFile(
-    file: File,
-    gcsBucket: string,
-  ): Promise<{ processedFileUrl: string; processedFileName: string }> {
+  async processFile(file: File): Promise<File> {
     console.log('🔄 Calling backend to process file:', file.name);
 
     const formData = new FormData();
     formData.append('shapefile', file);
-    formData.append('bucket', gcsBucket);
 
     const response = await fetch('/api/convert-upload', {
       method: 'POST',
@@ -22,21 +17,24 @@ export class FileProcessingService {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.message || 'File conversion failed on the server.');
+      const errorText = await response.text();
+      throw new Error(`File conversion failed on the server: ${errorText}`);
     }
 
-    const result = await response.json();
-    return {
-        processedFileUrl: result.gcsUri,
-        processedFileName: result.gcsUri.split('/').pop()
-    };
+    // The backend sends the converted file directly. Handle it as a blob.
+    const blob = await response.blob();
+    const convertedFile = new File([blob], `${file.name}.geojson`, { type: 'application/geo+json' });
+    
+    console.log('✅ Backend conversion successful. Received converted file.');
+    return convertedFile;
   }
-  
+
+  // The rest of the functions remain the same...
   async processGcsFile(
     gcsBucket: string,
     gcsPath: string
   ): Promise<{ processedFileUrl: string; processedFileName: string }> {
+    // This function remains for potential future use but is not part of the primary local upload flow.
     console.log(`🔄 Calling backend to process GCS file: gs://${gcsBucket}/${gcsPath}`);
     
     const response = await fetch('/api/convert-gcs', {
@@ -57,15 +55,11 @@ export class FileProcessingService {
     };
   }
 
-  // Schema inference would now happen on the backend, but we keep the shell here.
   private inferSchema(records: any[]): SchemaField[] {
-    // This logic would ideally be on the backend, and the schema
-    // returned from the /api/convert endpoint.
     return [];
   }
 
   async validateProcessedFile(gcsUri: string): Promise<boolean> {
-    // With backend processing, a successful response implies the file exists.
     return !!gcsUri;
   }
 }

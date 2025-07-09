@@ -1,11 +1,11 @@
 const express = require('express');
 const multer = require('multer');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { promisify } = require('util');
+const execPromise = promisify(require('child_process').exec);
 
-const execPromise = promisify(exec);
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
@@ -18,12 +18,11 @@ app.post('/api/convert-upload', upload.single('shapefile'), async (req, res) => 
 
     const tempDir = path.join(__dirname, 'uploads', `unzipped-${Date.now()}`);
     const inputFile = req.file.path;
-    // We'll create two temporary files now
-    const intermediateGeoJSON = `${tempDir}/intermediate.geojson`;
-    const finalNDJSON = `${tempDir}/output.ndjson`;
+    const intermediateGeoJSON = path.join(tempDir, 'intermediate.geojson');
+    const outputNDJSON = path.join(tempDir, 'output.ndjson');
 
     try {
-        await fs.promises.mkdir(tempDir);
+        await fs.promises.mkdir(tempDir, { recursive: true });
         await execPromise(`unzip -j "${inputFile}" -d "${tempDir}"`);
 
         const files = await fs.promises.readdir(tempDir);
@@ -34,46 +33,72 @@ app.post('/api/convert-upload', upload.single('shapefile'), async (req, res) => 
         }
 
         const shpFilePath = path.join(tempDir, shpFile);
-        // First, convert the shapefile to a standard GeoJSON FeatureCollection
-        const command = `/usr/bin/ogr2ogr -f GeoJSON "${intermediateGeoJSON}" "${shpFilePath}"`;
-        await execPromise(command);
 
-        // --- NEW: Convert the GeoJSON to the correct NDJSON format ---
+        // --- Step 1: Simple, reliable conversion to standard GeoJSON ---
+        const command = `/usr/bin/ogr2ogr`;
+        const args = ['-f', 'GeoJSON', intermediateGeoJSON, shpFilePath];
+        const ogr2ogrProcess = spawn(command, args);
+
+        let stderr = '';
+        ogr2ogrProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+        await new Promise((resolve, reject) => {
+            ogr2ogrProcess.on('close', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(`ogr2ogr failed with code ${code}:\n${stderr}`));
+            });
+        });
+
+        // --- Step 2: Create NDJSON with a Well-Known Text (WKT) string for geometry ---
         const geojsonData = await fs.promises.readFile(intermediateGeoJSON, 'utf8');
         const featureCollection = JSON.parse(geojsonData);
         
-        const writeStream = fs.createWriteStream(finalNDJSON);
-        featureCollection.features.forEach(feature => {
-            // Create a new object for each feature, combining properties and geometry
-            const featureForBigQuery = {
-                ...feature.properties,
-                geometry: JSON.stringify(feature.geometry)
-            };
-            // Write each feature as a separate line in the output file
-            writeStream.write(JSON.stringify(featureForBigQuery) + '\n');
-        });
-        writeStream.end();
-        // --- End of new section ---
+        const writeStream = fs.createWriteStream(outputNDJSON);
 
-        // Wait for the write stream to finish before sending the file
+        featureCollection.features.forEach(feature => {
+            if (feature.geometry && feature.geometry.type === 'LineString' && feature.geometry.coordinates.length > 0) {
+                const coordinates = feature.geometry.coordinates;
+
+                // Ensure the line is "closed" for a valid polygon ring
+                const firstPoint = coordinates[0];
+                const lastPoint = coordinates[coordinates.length - 1];
+                if (firstPoint[0] !== lastPoint[0] || firstPoint[1] !== lastPoint[1]) {
+                    coordinates.push(firstPoint);
+                }
+
+                // **THE FIX**: Manually construct the WKT string.
+                // It formats the coordinates as "lon lat, lon lat, ..."
+                const pointsString = coordinates.map(point => point.join(' ')).join(', ');
+                const wktString = `POLYGON((${pointsString}))`;
+
+                // Construct the new feature object with the WKT string
+                const featureForBigQuery = {
+                    ...feature.properties,
+                    geometry: wktString // The geometry is now a simple, unambiguous string
+                };
+                
+                writeStream.write(JSON.stringify(featureForBigQuery) + '\n');
+            }
+        });
+
+        writeStream.end();
         await new Promise(resolve => writeStream.on('finish', resolve));
 
-        res.sendFile(path.resolve(finalNDJSON), (err) => {
-            // Clean up all temporary files and directories
+        // --- Step 3: Send the final, correct file ---
+        res.sendFile(path.resolve(outputNDJSON), (err) => {
             fs.unlink(inputFile, () => {});
             fs.rm(tempDir, { recursive: true, force: true }, () => {});
         });
 
     } catch (error) {
         console.error('--- PROCESSING FAILED ---', error);
-        // Ensure cleanup on failure
         fs.unlink(inputFile, () => {});
-        fs.rm(tempDir, { recursive: true, force: true }, () => {});
-        res.status(500).json({ message: 'File conversion failed', error: error.message });
+        if (fs.existsSync(tempDir)) {
+          fs.rm(tempDir, { recursive: true, force: true }, () => {});
+        }
+        res.status(500).json({ message: 'File conversion failed on the server', error: error.message });
     }
 });
 
-// Catch-all to serve the React app
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
